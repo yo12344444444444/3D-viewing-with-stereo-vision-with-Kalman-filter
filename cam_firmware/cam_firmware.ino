@@ -18,8 +18,8 @@
 #include "esp_http_server.h"
 
 // ===== CHANGE THESE =====
-const char* ssid     = "covalitos";
-const char* password = "0526461671";
+const char* ssid     = "RobotCar";
+const char* password = "robot1234";
 // =========================
 
 // AI-Thinker ESP32-CAM pin map

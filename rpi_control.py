@@ -19,8 +19,8 @@ Marlin settings needed (in Configuration.h):
 Run:
     python3 rpi_control.py
 
-Phone (on RobotCar WiFi) → http://192.168.4.1:8001
-ESP32 commands           → TCP 192.168.4.1:9000
+Phone (on RobotCar WiFi) → http://10.3.141.1:8001
+ESP32 commands           → TCP 10.3.141.1:9000
                            send: forward / backward / left / right / stop\n
 """
 
@@ -54,7 +54,7 @@ VISION_HZ    = 5
 # Ports
 CONTROL_PORT = 8001
 ESP32_PORT   = 9000
-RPi_IP       = "192.168.4.1"
+RPi_IP       = "10.3.141.1"
 # ══════════════════════════════════════════════════
 
 _VALID_CMDS = {"forward", "backward", "left", "right", "stop"}

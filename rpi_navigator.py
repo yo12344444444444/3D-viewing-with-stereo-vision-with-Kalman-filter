@@ -9,7 +9,7 @@ Stops if robot_vision.py sees an obstacle.
 Run:
     python3 rpi_navigator.py
 
-Phone → http://192.168.4.1:8002
+Phone → http://10.3.141.1:8002
 """
 
 import threading, time, json, sys, subprocess, re
@@ -30,13 +30,13 @@ from mks.Movments import Movments
 PC_MAC_ADDRESS = "F0-57-A6-A6-07-57"   # ← change this to your PC MAC
 
 AI_SERVER_PORT = 5000
-AP_SUBNET      = "192.168.4"           # RobotCar AP subnet
+AP_SUBNET      = "10.3.141"            # RobotCar AP subnet (RaspAP)
 ARP_RETRIES    = 5                     # how many times to try finding PC
 ARP_RETRY_WAIT = 3                     # seconds between retries
 
-VISION_URL     = "http://localhost:8000/status"
+VISION_URL     = None   # set automatically from PC_SERVER_URL below
 CONTROL_PORT   = 8002
-RPI_IP         = "192.168.4.1"
+RPI_IP         = "10.3.141.1"
 
 FRAME_W        = 320
 DEADZONE       = 25
@@ -131,6 +131,7 @@ else:
     print(f"[ARP] FALLBACK: set PC_SERVER_URL manually in this file")
 
 print(f"[ARP] AI Server URL → {PC_SERVER_URL}")
+VISION_URL = f"{PC_SERVER_URL}/status"   # obstacle check uses same server
 
 
 # ─────────────────────────────────────────────────

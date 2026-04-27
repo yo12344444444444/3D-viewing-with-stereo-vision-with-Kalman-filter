@@ -35,8 +35,8 @@ import urllib.request
 # ══════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════
-LEFT_URL  = "http://10.100.102.38/stream"
-RIGHT_URL = "http://10.100.102.32/stream"
+LEFT_URL  = "http://10.3.141.143/stream"   # ← left  ESP32-CAM IP on RobotCar WiFi
+RIGHT_URL = "http://10.3.141.150/stream"   # ← right ESP32-CAM IP on RobotCar WiFi
 
 # Camera baseline in mm (measure between the two lenses with a ruler).
 BASELINE_MM = 112.0
@@ -56,7 +56,7 @@ DANGER_CM = 60.0
 YOLO_CONF = 0.40
 
 # Use GPU if available.
-DEVICE = "cuda"   # "cuda" or "cpu"
+DEVICE = "cpu"   # "cuda" or "cpu"
 
 # Web server port.
 WEB_PORT = 8000
@@ -76,6 +76,9 @@ class AppState:
         self.scale_mult_req = None        # ']' → 1.4,  '[' → 0.7
         self.alert          = False
         self.scale_str      = "NOT CALIBRATED"
+        self._scale_raw     = None   # scaler.scale  (shared with pc_ai_server)
+        self._scale_mult    = 1.0    # scaler.manual_mult
+        self.distances      = []     # [{"name":"chair","dist_cm":45}, …]
         self.detections_log = []          # latest console-style lines
         # Latest JPEG bytes of the composite frame for MJPEG streaming
         self._jpeg_buf      = None
@@ -308,6 +311,16 @@ def _build_app():
   <div class="feed-overlay" id="fps-label">live</div>
 </div>
 
+<!-- DISTANCES -->
+<div class="section" style="margin-top:14px">
+  <div class="section-title">Live Distances — closest first</div>
+  <div id="dist-panel">
+    <div style="color:#4a6070;font-family:monospace;font-size:.8rem;padding:10px 0">
+      Waiting for detections…
+    </div>
+  </div>
+</div>
+
 <!-- CALIBRATION -->
 <div class="section">
   <div class="section-title">Calibration</div>
@@ -418,6 +431,37 @@ def _build_app():
       // alert banner
       document.getElementById('alert-banner').classList.toggle('show', s.alert);
 
+      // ── distance panel ────────────────────────
+      const dp = document.getElementById('dist-panel');
+      if (s.distances && s.distances.length) {
+        const calibrated = s.scale_str !== 'NOT CALIBRATED';
+        dp.innerHTML = s.distances.map(o => {
+          const col   = o.danger ? '#ff3355' : (o.dist_cm < s.danger_cm * 1.5 ? '#ff8c00' : '#00e676');
+          const bar   = Math.max(4, Math.min(100, Math.round(100 - o.dist_cm / 3)));
+          return `
+          <div style="display:flex;align-items:center;gap:10px;
+                      padding:8px 10px;margin-bottom:6px;
+                      background:#111620;border:1px solid ${col}33;
+                      border-radius:8px;">
+            <div style="flex:1;font-family:monospace;">
+              <span style="color:#c8d8e8;font-size:.85rem;">${o.name}</span>
+            </div>
+            <div style="font-family:monospace;font-size:1.1rem;
+                        font-weight:800;color:${col};min-width:60px;text-align:right;">
+              ${calibrated ? o.dist_cm + ' cm' : '? cm'}
+            </div>
+            <div style="width:60px;height:6px;background:#1e2a38;border-radius:3px;overflow:hidden;">
+              <div style="width:${bar}%;height:100%;background:${col};border-radius:3px;"></div>
+            </div>
+          </div>`;
+        }).join('');
+        if (!calibrated) {
+          dp.innerHTML += '<div style="color:#ff8c00;font-family:monospace;font-size:.7rem;padding:4px 0">⚠ Calibrate for real distances</div>';
+        }
+      } else {
+        dp.innerHTML = '<div style="color:#4a6070;font-family:monospace;font-size:.8rem;padding:10px 0">No objects detected</div>';
+      }
+
       // log
       const lb = document.getElementById('log-box');
       if (s.log && s.log.length) {
@@ -458,13 +502,14 @@ def _build_app():
     def get_status():
         with state.lock:
             return {
-                "alive":     True,
-                "alert":     state.alert,
-                "danger_cm": round(state.danger_cm),
-                "main_cam":  state.main_cam,
-                "scale_str": state.scale_str,
-                "show_depth":state.show_depth,
-                "log":       list(state.detections_log[-8:]),
+                "alive":      True,
+                "alert":      state.alert,
+                "danger_cm":  round(state.danger_cm),
+                "main_cam":   state.main_cam,
+                "scale_str":  state.scale_str,
+                "show_depth": state.show_depth,
+                "log":        list(state.detections_log[-8:]),
+                "distances":  list(state.distances),   # ← live object distances
             }
 
     # ── calibrate ─────────────────────────────────
@@ -507,6 +552,16 @@ def _build_app():
             state.scale_mult_req = mult
         label = "×1.4 (increase)" if mult > 1 else "×0.7 (decrease)"
         return {"message": f"Scale {label}"}
+
+    # ── expose calibrated scale to pc_ai_server ───
+    @app.get("/scale_value")
+    def get_scale_value():
+        with state.lock:
+            raw  = state._scale_raw
+            mult = state._scale_mult
+        if raw is None:
+            return {"calibrated": False, "scale": None}
+        return {"calibrated": True, "scale": raw * mult}
 
     return app
 
@@ -868,10 +923,27 @@ def main():
         # ── push to web stream ────────────────────
         state.push_frame(display)
 
+        # ── build live distance list ──────────────
+        dist_list = []
+        if depth_cm is not None:
+            for d in detections:
+                roi   = depth_cm[d["y1"]:d["y2"], d["x1"]:d["x2"]]
+                valid = roi[(roi > 1) & (roi < 2000)]
+                if valid.size > 0:
+                    dist_list.append({
+                        "name":    d["name"],
+                        "dist_cm": round(float(np.median(valid)), 1),
+                        "danger":  float(np.median(valid)) < state.danger_cm,
+                    })
+        dist_list.sort(key=lambda x: x["dist_cm"])   # closest first
+
         # ── update web state ──────────────────────
         with state.lock:
-            state.alert     = alert
-            state.scale_str = scale_str
+            state.alert       = alert
+            state.scale_str   = scale_str
+            state._scale_raw  = scaler.scale
+            state._scale_mult = scaler.manual_mult
+            state.distances   = dist_list
 
         # ── periodic detection log ────────────────
         frame_n += 1

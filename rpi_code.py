@@ -124,8 +124,10 @@ def setup_ap():
 
     # Enable IP forwarding (needed for internet sharing, harmless otherwise)
     print("\n=== Enabling IPv4 forwarding ===")
-    run("sed -i 's/#*net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf")
-    run("sysctl -p /etc/sysctl.conf")
+    # Write to /etc/sysctl.d/ — works even if /etc/sysctl.conf doesn't exist
+    with open("/etc/sysctl.d/99-ip-forward.conf", "w") as f:
+        f.write("net.ipv4.ip_forward=1\n")
+    run("sysctl -w net.ipv4.ip_forward=1")   # apply immediately without reboot
 
     if nm_available():
         setup_ap_nmcli()

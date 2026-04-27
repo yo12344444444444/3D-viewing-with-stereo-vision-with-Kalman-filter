@@ -12,10 +12,10 @@ Run:
     python pc_ai_server.py
 
 Then on RPi set PC_SERVER_URL = "http://<YOUR-PC-IP>:5000"
-Your PC IP on RobotCar AP: run  ipconfig  and look for 192.168.4.x
+Your PC IP on RobotCar AP: run  ipconfig  and look for 10.3.141.x
 """
 
-import threading, time, urllib.request, io, subprocess, re
+import threading, time, urllib.request, io, subprocess, re, json
 import cv2
 import numpy as np
 import uvicorn
@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 # ESP32 camera MAC address
 # Find it in Arduino serial monitor on boot:
 #   "WiFi connected — MAC: AA:BB:CC:DD:EE:FF"
-CAM_MAC_ADDRESS = "aa:bb:cc:dd:ee:ff"
+CAM_MAC_ADDRESS = "34:98:7A:6B:61:40"
 CAM_STREAM_PATH = "/stream"             # ESP32 stream endpoint
 
 # What objects to search for (YOLO-World — add anything you want!)
@@ -39,14 +39,16 @@ CLASSES   = [
     "remote", "keyboard", "book", "bag"
 ]
 
-SERVER_PORT    = 5000
-AP_SUBNET      = "192.168.4"
-DEVICE         = "cuda"    # "cuda" or "cpu"
-PROC_W, PROC_H = 320, 240
-YOLO_CONF      = 0.30
-ARRIVE_DEPTH   = 35
-ARP_RETRIES    = 5
-ARP_RETRY_WAIT = 3
+SERVER_PORT      = 5000
+AP_SUBNET        = "10.3.141"
+DEVICE           = "cpu"     # "cuda" or "cpu"
+PROC_W, PROC_H   = 320, 240
+YOLO_CONF        = 0.30
+ARRIVE_DEPTH     = 35
+ARP_RETRIES      = 5
+ARP_RETRY_WAIT   = 3
+RPI_VISION_PORT  = 8000      # robot_vision.py port (now runs on this PC)
+RPI_IP           = "localhost"
 # ══════════════════════════════════════════════════
 
 
@@ -245,11 +247,25 @@ def _midas_depth(model, tf, dev, bgr):
 # ─────────────────────────────────────────────────
 #  Detection + depth loop
 # ─────────────────────────────────────────────────
+def _fetch_calibrated_scale() -> float | None:
+    """Pull the calibrated MiDaS scale from robot_vision.py on the RPi."""
+    try:
+        url = f"http://{RPI_IP}:{RPI_VISION_PORT}/scale_value"
+        with urllib.request.urlopen(url, timeout=2) as r:
+            data = json.loads(r.read())
+            if data.get("calibrated") and data.get("scale"):
+                return float(data["scale"])
+    except Exception:
+        pass
+    return None
+
+
 def _detection_loop():
-    yolo                = _load_yolo()
+    yolo                 = _load_yolo()
     midas, midas_tf, dev = _load_midas()
-    scale               = None   # midas → cm scale (auto-estimated)
-    scale_buf           = []
+    scale                = None   # midas → cm scale
+    scale_buf            = []
+    _last_scale_fetch    = 0.0    # throttle RPi scale fetches
 
     while True:
         with _raw_frame_lock:
@@ -263,13 +279,23 @@ def _detection_loop():
         # ── depth ─────────────────────────────────
         raw_depth = _midas_depth(midas, midas_tf, dev, frame)
 
-        # ── auto-scale depth to cm (rough estimate) ─
-        # assume median depth in frame ≈ 150 cm (1.5 m) as a baseline
-        med = float(np.median(raw_depth[raw_depth > 1e-3]))
-        if med > 1e-3:
-            scale_buf.append(150.0 * med)
-            scale_buf = scale_buf[-60:]
-            scale = float(np.median(scale_buf))
+        # ── prefer calibrated scale from robot_vision.py ──
+        # fetch every 5 s so we pick up re-calibrations live
+        now = time.time()
+        if now - _last_scale_fetch > 5.0:
+            _last_scale_fetch = now
+            cal = _fetch_calibrated_scale()
+            if cal:
+                scale = cal
+                print(f"[SCALE] using calibrated scale from RPi: {scale:.1f}")
+
+        # ── fallback: auto-scale if RPi not calibrated yet ─
+        if scale is None:
+            med = float(np.median(raw_depth[raw_depth > 1e-3]))
+            if med > 1e-3:
+                scale_buf.append(150.0 * med)
+                scale_buf = scale_buf[-60:]
+                scale = float(np.median(scale_buf))
 
         depth_cm = None
         if scale:

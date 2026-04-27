@@ -123,7 +123,8 @@ void startServers() {
 
     // Capture server on port 81 (separate so /stream doesn't block /capture)
     httpd_config_t cfg81 = HTTPD_DEFAULT_CONFIG();
-    cfg81.server_port = 81;
+    cfg81.server_port  = 81;
+    cfg81.ctrl_port    = 32769;   // ← must differ from cfg80's default (32768)
     httpd_uri_t capture_uri = {
         .uri = "/capture", .method = HTTP_GET,
         .handler = capture_handler, .user_ctx = NULL
@@ -180,8 +181,10 @@ void setup() {
         delay(500); Serial.print(".");
     }
     Serial.println();
-    Serial.print("IP: ");
+    Serial.print("IP:  ");
     Serial.println(WiFi.localIP());
+    Serial.print("MAC: ");
+    Serial.println(WiFi.macAddress());   // ← needed for pc_ai_server.py
     Serial.println("  /stream  on port 80");
     Serial.println("  /capture on port 81");
 

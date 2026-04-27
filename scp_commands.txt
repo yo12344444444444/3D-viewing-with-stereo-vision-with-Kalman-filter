@@ -1,0 +1,31 @@
+══════════════════════════════════════════════════════
+  SCP commands — run from project folder on Windows PC
+  (must be connected to RobotCar WiFi)
+══════════════════════════════════════════════════════
+
+── UPLOAD FILES ─────────────────────────────────────
+
+ssh yorai@10.3.141.1 "mkdir -p /home/yorai/mks"
+
+scp robot_vision.py      yorai@10.3.141.1:/home/yorai/
+scp rpi_navigator.py     yorai@10.3.141.1:/home/yorai/
+scp rpi_control.py       yorai@10.3.141.1:/home/yorai/
+scp rpi_code.py          yorai@10.3.141.1:/home/yorai/
+scp mks\Movments.py      yorai@10.3.141.1:/home/yorai/mks/
+
+── INSTALL LIBRARIES (run once) ─────────────────────
+
+ssh yorai@10.3.141.1 "pip install --break-system-packages fastapi uvicorn opencv-python numpy pyserial requests ultralytics timm"
+
+ssh yorai@10.3.141.1 "pip install --break-system-packages torch torchvision --index-url https://download.pytorch.org/whl/cpu"
+
+── RUN ON RPI ────────────────────────────────────────
+
+Terminal 1:   ssh yorai@10.3.141.1 "python3 /home/yorai/robot_vision.py"
+Terminal 2:   ssh yorai@10.3.141.1 "python3 /home/yorai/rpi_navigator.py"
+
+── PHONE / BROWSER ──────────────────────────────────
+
+Vision + calibration:  http://10.3.141.1:8000
+Robot navigation UI:   http://10.3.141.1:8002
+Manual D-pad control:  http://10.3.141.1:8001
